@@ -241,7 +241,7 @@ The result builder has one `buildPartialBlock` overload per shape, plus a `Never
 
 ## Requirements
 
-- Swift 6.3+, Swift language mode 6
+- Swift 6.2+, Swift language mode 6
 - macOS 15+ / iOS 18+ (inherited from `fp-swift`)
 - Strict concurrency: clean
 

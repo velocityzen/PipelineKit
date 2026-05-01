@@ -1,0 +1,12 @@
+@testable import PipelineKit
+import Testing
+
+private enum E: Error, Equatable { case bad }
+
+@Test
+func emptyEmitsNothing() async {
+    let result = await Pipeline<Int, E> {
+        Empty(valueType: Int.self, failureType: E.self)
+    }.toResult()
+    #expect(result == .success([]))
+}

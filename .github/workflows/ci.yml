@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode (provides swift-format)
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Show tool versions
+        run: |
+          swift-format --version
+          swiftlint --version
+
+      - name: swift-format (lint mode, strict)
+        run: swift-format lint --recursive --strict --configuration .swift-format Sources Tests
+
+      - name: SwiftLint (strict)
+        run: swiftlint --strict
+
+  macos:
+    name: Test macOS
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        # macos-15 ships with multiple Xcodes; pick the latest available so we get Swift 6.3+.
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build -v
+
+      - name: Test
+        run: swift test
+
+  linux:
+    name: Test Linux
+    runs-on: ubuntu-latest
+    container:
+      image: swift:6.3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build -v
+
+      - name: Test
+        run: swift test

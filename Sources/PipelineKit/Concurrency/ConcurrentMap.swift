@@ -5,6 +5,11 @@
 /// - `compactMapAsyncUnordered` — same, with `nil` results dropped (thin layer over the above).
 /// - `mapAsyncKeepOrderBounded` — yields in strict source order, draining the head
 ///                                of a sliding window of pending tasks.
+///
+/// Cancellation: each helper proactively cancels in-flight transforms when the outer Task
+/// is cancelled. Cooperative transforms (those that await something cancellation-aware)
+/// will short-circuit; non-cooperative CPU-bound transforms still run to completion, but
+/// the consumer no longer waits past the currently-resolving result.
 
 /// Wraps a draining `Task` in an `AsyncStream`, finishing the continuation when the body
 /// returns and cancelling the task on stream termination. Eliminates the boilerplate that
@@ -38,14 +43,18 @@ where
 
             // Prime up to N tasks.
             for _ in 0..<concurrency {
+                if Task.isCancelled { break }
                 guard let element = try? await iter.next() else { break }
                 group.addTask { await transform(element) }
             }
 
             // Drain: every completion emits a result and pulls the next source element.
             while let result = await group.next() {
+                if Task.isCancelled {
+                    group.cancelAll()
+                    break
+                }
                 continuation.yield(result)
-                if Task.isCancelled { break }
                 if let element = try? await iter.next() {
                     group.addTask { await transform(element) }
                 }
@@ -67,6 +76,7 @@ where
 {
     asyncStream { continuation in
         for await result in mapAsyncUnordered(source, concurrency: concurrency, transform) {
+            if Task.isCancelled { break }
             if let value = result { continuation.yield(value) }
         }
     }
@@ -89,20 +99,30 @@ where
 
         // Prime the sliding window with up to N tasks.
         for _ in 0..<concurrency {
+            if Task.isCancelled { break }
             guard let element = try? await iter.next() else { break }
             window.append(Task { await transform(element) })
         }
 
-        // Drain head, refill back, preserving source order.
+        // Drain head, refill back, preserving source order. Cancellation is checked both
+        // before awaiting the head (so a non-cooperative head doesn't strand pending work)
+        // and after, before refilling.
         while !window.isEmpty {
+            if Task.isCancelled {
+                for pending in window { pending.cancel() }
+                window.removeAll()
+                break
+            }
             let head = window.removeFirst()
             continuation.yield(await head.value)
-            if Task.isCancelled { break }
+            if Task.isCancelled {
+                for pending in window { pending.cancel() }
+                window.removeAll()
+                break
+            }
             if let element = try? await iter.next() {
                 window.append(Task { await transform(element) })
             }
         }
-
-        for pending in window { pending.cancel() }
     }
 }

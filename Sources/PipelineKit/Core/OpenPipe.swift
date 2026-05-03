@@ -20,7 +20,7 @@ public struct OpenPipe<Input: Sendable, Success: Sendable, Failure: Error & Send
     /// Apply the open pipe to an `AsyncSequence`, returning a regular `Pipe` ready to iterate.
     public func callAsFunction<S: AsyncSequence & Sendable>(
         _ source: S,
-    ) -> Pipe<Success, Failure> where S.Element == Input {
+    ) -> Pipe<Success, Failure> where S.Element == Input, S.Failure == Never {
         apply(Pipe { From(source) })
     }
 

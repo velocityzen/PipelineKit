@@ -8,7 +8,8 @@ public struct AnyAsyncSequence<Element: Sendable>: AsyncSequence, Sendable {
 
     private let _makeIterator: @Sendable () -> Iterator
 
-    public init<S: AsyncSequence & Sendable>(_ base: S) where S.Element == Element {
+    public init<S: AsyncSequence & Sendable>(_ base: S)
+    where S.Element == Element, S.Failure == Never {
         self._makeIterator = { Iterator(base) }
     }
 
@@ -23,13 +24,12 @@ public struct AnyAsyncSequence<Element: Sendable>: AsyncSequence, Sendable {
     public struct Iterator: AsyncIteratorProtocol {
         private var _next: () async -> Element?
 
-        init<S: AsyncSequence>(_ base: S) where S.Element == Element {
+        init<S: AsyncSequence>(_ base: S) where S.Element == Element, S.Failure == Never {
             var iterator = base.makeAsyncIterator()
-            // Only constructs this from non-throwing upstreams. A thrown error
-            // collapses to end-of-sequence so iteration terminates safely.
             self._next = {
-                guard let element = try? await iterator.next() else { return nil }
-                return element
+                // `try?` is provably safe given the `S.Failure == Never` constraint above —
+                // it just satisfies the legacy untyped-throws `next()` signature.
+                try? await iterator.next()
             }
         }
 

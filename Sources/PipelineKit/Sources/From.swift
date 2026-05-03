@@ -1,7 +1,7 @@
 /// A source backed by an `AsyncSequence` whose elements are already `Result`s.
 struct ResultAsyncSequenceSource<S: AsyncSequence & Sendable, V: Sendable, E: Error & Sendable>:
     PipeSource
-where S.Element == Result<V, E> {
+where S.Element == Result<V, E>, S.Failure == Never {
     typealias Output = V
     typealias Failure = E
 
@@ -20,7 +20,7 @@ where S.Element == Result<V, E> {
 /// A source backed by an `AsyncSequence` of bare values; each value is lifted into `.success`
 /// in a single iterator hop (no intermediate `AsyncMapSequence`).
 struct LiftedAsyncSequenceSource<S: AsyncSequence & Sendable>: PipeSource
-where S.Element: Sendable {
+where S.Element: Sendable, S.Failure == Never {
     typealias Output = S.Element
     typealias Failure = Never
 
@@ -63,14 +63,14 @@ where S.Element: Sendable {
 /// use `Defer { … }` instead.
 public func From<S: AsyncSequence & Sendable>(
     _ source: @autoclosure @escaping @Sendable () -> S,
-) -> some PipeSource<S.Element, Never> where S.Element: Sendable {
+) -> some PipeSource<S.Element, Never> where S.Element: Sendable, S.Failure == Never {
     LiftedAsyncSequenceSource(source)
 }
 
 /// Lift an `AsyncSequence` of `Result` elements into a pipeline source.
 public func FromResult<S: AsyncSequence & Sendable, V: Sendable, E: Error & Sendable>(
     _ source: @autoclosure @escaping @Sendable () -> S,
-) -> some PipeSource<V, E> where S.Element == Result<V, E> {
+) -> some PipeSource<V, E> where S.Element == Result<V, E>, S.Failure == Never {
     ResultAsyncSequenceSource(source)
 }
 
@@ -106,14 +106,14 @@ public func FromResult<V: Sendable, E: Error & Sendable>(
 /// re-iterable (e.g. an `AsyncStream` you build from a fresh continuation).
 public func Defer<S: AsyncSequence & Sendable>(
     _ make: @escaping @Sendable () -> S,
-) -> some PipeSource<S.Element, Never> where S.Element: Sendable {
+) -> some PipeSource<S.Element, Never> where S.Element: Sendable, S.Failure == Never {
     LiftedAsyncSequenceSource(make)
 }
 
 /// Deferred form of `FromResult` for `Result`-bearing sequences.
 public func DeferResult<S: AsyncSequence & Sendable, V: Sendable, E: Error & Sendable>(
     _ make: @escaping @Sendable () -> S,
-) -> some PipeSource<V, E> where S.Element == Result<V, E> {
+) -> some PipeSource<V, E> where S.Element == Result<V, E>, S.Failure == Never {
     ResultAsyncSequenceSource(make)
 }
 
@@ -157,7 +157,7 @@ where Base.Element: Sendable {
 /// Wraps an `AsyncSequence` and yields `Result.success(element)` per iteration, in a
 /// single hop instead of going through `AsyncMapSequence`.
 struct LiftingAsyncSequence<Base: AsyncSequence & Sendable>: AsyncSequence
-where Base.Element: Sendable {
+where Base.Element: Sendable, Base.Failure == Never {
     typealias Element = Result<Base.Element, Never>
 
     let base: Base
@@ -176,8 +176,8 @@ where Base.Element: Sendable {
         }
 
         mutating func next() async -> Result<Base.Element, Never>? {
-            // V0.1 contract: only non-throwing upstreams reach here. Coerce a hypothetical
-            // throw to end-of-sequence to preserve the surface API.
+            // `try?` is provably safe given `Base.Failure == Never` above — it just
+            // satisfies the legacy untyped-throws `next()` signature.
             guard let element = try? await iterator.next() else { return nil }
             return .success(element)
         }

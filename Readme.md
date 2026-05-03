@@ -32,28 +32,25 @@ func fetchArticles(_ urls: [URL]) async -> Result<[Article], AppError> {
         // 1. Lift URLs into the pipeline (Pipe<URL, Never>).
         From(urls)
 
-        // 2. Concurrent fetches; emission order matches the input order.
-        AsyncMapKeepOrder { url -> Result<Data, AppError> in
+        // 2. Concurrent fetches; failures lift directly into the channel, order preserved.
+        AsyncFlatMapKeepOrder { url in
             await Result.fromAsync { try await URLSession.shared.data(from: url).0 }
                 .mapError(AppError.network)
         }
 
-        // 3. Lift the inner Result back into the failure channel.
-        FlatMap { (r: Result<Data, AppError>) in r }
-
-        // 4. Bridge throwing JSON decode into the failure channel.
+        // 3. Bridge throwing JSON decode into the failure channel.
         FlatMap { data in
             Result { try JSONDecoder().decode(Article.self, from: data) }
                 .mapError { _ in AppError.decode(data) }
         }
 
-        // 5. Drop boring articles.
+        // 4. Drop boring articles.
         Filter { $0.isInteresting }
 
-        // 6. Side-effect on failures only — count in metrics, log, etc.
+        // 5. Side-effect on failures only — count in metrics, log, etc.
         TapError { error in print("article failed:", error) }
 
-        // 7. Recover only from rate-limit failures with a placeholder; others propagate.
+        // 6. Recover only from rate-limit failures with a placeholder; others propagate.
         FlatMapError { (e: AppError) -> Result<Article, AppError> in
             switch e {
                 case .rateLimited: return .success(.placeholder)
@@ -68,7 +65,7 @@ func fetchArticles(_ urls: [URL]) async -> Result<[Article], AppError> {
 
 Key shapes used:
 - `From` / `FromResult` for source ingest.
-- `AsyncMapKeepOrder` for concurrent-but-ordered work.
+- `AsyncFlatMapKeepOrder` for concurrent-but-ordered work whose closure may fail.
 - `FlatMap` to bridge throwing decode into the failure channel.
 - `Filter` for drop-on-predicate.
 - `TapError` for failure-side observation without consumption.
@@ -84,6 +81,7 @@ Key shapes used:
 | `AsyncMap` | `(A) async → B` | Async transform. |
 | `AsyncFlatMap` | `(A) async → Result<B, F>` | Async transform with possible failure. |
 | `AsyncMapKeepOrder` | `(A) async → B`, `concurrency:` | Bounded-parallel transform; **preserves source order**. |
+| `AsyncFlatMapKeepOrder` | `(A) async → Result<B, F>`, `concurrency:` | Bounded-parallel transform with possible failure; **preserves source order**. |
 | `Filter` / `AsyncFilter` | `(A) → Bool` / `(A) async → Bool` | Keep matching successes; failures pass through. |
 | `CompactMap` / `AsyncCompactMap` | `(A) → B?` / `(A) async → B?` | Map and drop `nil`s. |
 | `Take` / `Drop` | `Int` | Limit / skip leading elements. |
@@ -200,10 +198,10 @@ AsyncCompactMap(concurrency: 6) { id in await maybeLookUp(id) }
 ```
 
 **Two ordering modes:**
-- **`AsyncMap` (and most `Async*` stages)** emit results **as they complete** — the fastest closure wins, output order is unrelated to source order.
-- **`AsyncMapKeepOrder`** preserves source order — slow elements hold back faster downstream ones, but you get back the original sequence with parallel processing in between.
+- **`AsyncMap` / `AsyncFlatMap` (and most `Async*` stages)** emit results **as they complete** — the fastest closure wins, output order is unrelated to source order.
+- **`AsyncMapKeepOrder` / `AsyncFlatMapKeepOrder`** preserve source order — slow elements hold back faster downstream ones, but you get back the original sequence with parallel processing in between.
 
-Use `AsyncMap(concurrency: N)` when order doesn't matter (typical for fan-out fetch + decode). Use `AsyncMapKeepOrder(concurrency: N)` when downstream expects source order (e.g. zipping with another sequence).
+Use the unordered variants when order doesn't matter (typical for fan-out fetch + decode). Use the `KeepOrder` variants when downstream expects source order (e.g. zipping with another sequence). The `FlatMap` variants take a `Result`-returning closure so per-element failures lift directly into the pipeline's failure channel.
 
 `AsyncTap` / `AsyncTapError` deliberately have no `concurrency:` parameter — observation stages run sequentially to keep side-effect ordering predictable.
 

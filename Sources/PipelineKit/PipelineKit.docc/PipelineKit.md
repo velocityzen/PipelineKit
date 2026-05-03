@@ -60,6 +60,7 @@ Stages are typed by what they touch — five protocols cover every shape, from f
 - ``AsyncMapKeepOrder(_:)``
 - ``FlatMap(_:)``
 - ``AsyncFlatMap(_:)``
+- ``AsyncFlatMapKeepOrder(_:)``
 - ``CompactMap(_:)``
 - ``AsyncCompactMap(_:)``
 

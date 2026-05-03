@@ -116,6 +116,49 @@ func ifWithoutElseAllowsTypePreservingFilter() async {
     #expect(result == .success([2, 4]))
 }
 
+// MARK: - OptionalStage absent-branch (one per overload protocol)
+
+@Test
+func ifWithoutElseAbsentForwardingStageIsIdentity() async {
+    let dropFirst = false
+    let pipe = Pipe<Int, Never> {
+        From([1, 2, 3, 4, 5])
+        if dropFirst {
+            Drop(2)  // PipeForwardingStage — absent path returns accumulated unchanged
+        }
+    }
+    let result = await pipe.toResult()
+    #expect(result == .success([1, 2, 3, 4, 5]))
+}
+
+@Test
+func ifWithoutElseAbsentPolyStageIsIdentity() async {
+    let dropOdds = false
+    let pipe = Pipe<Int, Never> {
+        From([1, 2, 3, 4])
+        if dropOdds {
+            Filter { (n: Int) in n.isMultiple(of: 2) }  // PipePolyStage<Int, Int>
+        }
+    }
+    let result = await pipe.toResult()
+    #expect(result == .success([1, 2, 3, 4]))
+}
+
+@Test
+func ifWithoutElseAbsentPolyValueStageIsIdentity() async {
+    let observe = false
+    let pipe = Pipe<Int, E> {
+        From([1, -1, 2])
+        FlatMap { (n: Int) -> Result<Int, E> in n < 0 ? .failure(.bad) : .success(n) }
+        if observe {
+            TapError { (_: E) in }  // PipePolyValueStage<E, E>
+        }
+    }
+    var seen: [Result<Int, E>] = []
+    for await x in pipe { seen.append(x) }
+    #expect(seen == [.success(1), .failure(.bad), .success(2)])
+}
+
 @Test
 func ifWithoutElseInsideOpenPipe() async {
     let dropFirst = true

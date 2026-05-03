@@ -5,7 +5,9 @@
 
 A small, opinionated library for composing async, error-aware pipelines in Swift.
 
-A `Pipe<Success, Failure>` is a re-iterable description of an async stream of `Result<Success, Failure>`. Stages compose in a `@resultBuilder` DSL. Errors live in the `Result.failure` channel — the library is `Result`-only by design, and Swift `throws` never crosses a stage boundary. Throwing code is bridged at the call site (see [Working with throwing code](#working-with-throwing-code) below). Built on top of [`fp-swift`](https://github.com/velocityzen/fp-swift).
+A `Pipe<Success, Failure>` is a lazy description of an async stream of `Result<Success, Failure>`. Stages compose in a `@resultBuilder` DSL. Errors live in the `Result.failure` channel — the library is `Result`-only by design, and Swift `throws` never crosses a stage boundary. Throwing code is bridged at the call site (see [Working with throwing code](#working-with-throwing-code) below). Built on top of [`fp-swift`](https://github.com/velocityzen/fp-swift).
+
+A `Pipe` is **re-iterable when its source is**. Replayable sources (`Array`, `Range`, `Sequence` literals, anything you build with `Defer { … }` / `FromAsync { … }`) yield the same elements on each iteration. **Single-shot sources** (a stored `AsyncStream`, a `for-await` over a network response, anything whose iterator can only be consumed once) will produce empty on the second iteration without warning — wrap them in `Defer { … }` to construct a fresh source per iteration.
 
 ## Example
 
@@ -158,7 +160,7 @@ for await x in pipe([1, -1, 2]) { … }            // closed Pipe<Int, Never>
 for await x in pipe(asyncStreamOfInts) { … }     // also a closed Pipe
 ```
 
-`pipe(source)` accepts any `Sequence` or `AsyncSequence` whose `Element == Input`. The returned `Pipe` is itself re-iterable in the usual way. Useful when the same pipeline shape needs to run over multiple inputs (per-request handlers, batch jobs over different cohorts, test setups), without rebuilding the stage chain.
+`pipe(source)` accepts any `Sequence` or `AsyncSequence` whose `Element == Input`. The returned `Pipe` follows the same re-iterability rule as a closed `Pipe` — replayable inputs (Array, Range) re-iterate; single-shot inputs (stored AsyncStream) produce empty on the second iteration. Useful when the same pipeline shape needs to run over multiple inputs (per-request handlers, batch jobs over different cohorts, test setups), without rebuilding the stage chain.
 
 For Result-bearing input streams, use the `FromResult(V.self, E.self)` marker — the inner `Result`s lift directly into the pipe's failure channel, so downstream stages see unwrapped successes:
 
@@ -218,6 +220,12 @@ AsyncCompactMap(concurrency: 6) { id in await maybeLookUp(id) }
 Use the unordered variants when order doesn't matter (typical for fan-out fetch + decode). Use the `KeepOrder` variants when downstream expects source order (e.g. zipping with another sequence). The `FlatMap` variants take a `Result`-returning closure so per-element failures lift directly into the pipeline's failure channel.
 
 `AsyncTap` / `AsyncTapError` deliberately have no `concurrency:` parameter — observation stages run sequentially to keep side-effect ordering predictable.
+
+### Cancellation
+
+When the consumer breaks out of `for await` (or the surrounding `Task` is cancelled), the pipeline tears down promptly: the iterator deinits, in-flight tasks receive a cancellation signal, and the consumer returns immediately — it does **not** wait for the in-flight transforms to complete.
+
+Whether the in-flight transforms themselves stop quickly depends on the transform body. **Cooperative transforms** — anything that awaits a cancellation-aware operation like `Task.sleep`, `URLSession.data`, or `try Task.checkCancellation()` — bail out as soon as the cancellation signal arrives. **Non-cooperative transforms** — tight CPU loops with no await and no `Task.isCancelled` check — run to completion regardless. This is a property of Swift's structured concurrency, not of PipelineKit; the takeaway is that for cancellation-sensitive workloads (long-running compute under `concurrency: N`), put a `Task.isCancelled` check or `try Task.checkCancellation()` somewhere in the closure.
 
 ## Conditional composition
 
@@ -287,7 +295,7 @@ if needsDoubling {
 
 ## Design
 
-A `Pipe<S, F>` is itself an `AsyncSequence<Result<S, F>>` — sinks are just iteration. Each `makeAsyncIterator()` reconstructs the underlying chain via a stored `@Sendable` builder, so pipeline values are re-iterable and free of shared mutable state.
+A `Pipe<S, F>` is itself an `AsyncSequence<Result<S, F>>` — sinks are just iteration. Each `makeAsyncIterator()` reconstructs the underlying chain via a stored `@Sendable` builder, so pipeline values carry no shared mutable state. Re-iterability of the resulting iterator depends on whether the underlying source is replayable (see the note in the introduction).
 
 Stages are typed by what they touch:
 
